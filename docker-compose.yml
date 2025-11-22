@@ -57,7 +57,6 @@ services:
       - "8080:8080"
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
       - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/auth_db?useSSL=false
       - DBMS_USERNAME=root
       - DBMS_PASSWORD=sapassword
@@ -189,7 +188,6 @@ services:
     depends_on:
       - mariadb
       - file-service
-      - auth-service
     networks:
       - shopping-network
 
@@ -248,7 +246,6 @@ services:
       - "8086:8086"
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
       - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/order_db
       - DBMS_USERNAME=root
       - DBMS_PASSWORD=sapassword
@@ -277,7 +274,6 @@ services:
       - "8087:8087" 
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - FEIGN_PRODUCT=http://product-service:8083/product
@@ -297,7 +293,6 @@ services:
       - "8088:8088"
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
       - SPRING_DATA_MONGODB_URI=mongodb://root:root@mongodb:27017/review_db?authSource=admin
       - FEIGN_FILE=http://file-service:8084/file
     depends_on:
@@ -332,7 +327,6 @@ services:
       - VNPAY_VERSION=${VNPAY_VERSION}
       # Timezone - IMPORTANT!
       - TZ=Asia/Ho_Chi_Minh
-      - SPRING_PROFILES_ACTIVE=prod
     depends_on:
       - mariadb
     networks:
@@ -353,7 +347,6 @@ services:
       - "8090:8090"
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
       - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/voucher_db
       - DBMS_USERNAME=root
       - DBMS_PASSWORD=sapassword
@@ -427,7 +420,6 @@ services:
       - "8091:8091"
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
       - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/policy_db
       - DBMS_USERNAME=root
       - DBMS_PASSWORD=sapassword
@@ -453,7 +445,6 @@ services:
       - "8888:8888"
     restart: always
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - AUTH_URL=http://auth-service:8080
