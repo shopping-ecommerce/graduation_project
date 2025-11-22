@@ -1,0 +1,20 @@
+# --- File cấu hình môi trường và bảo mật (QUAN TRỌNG) ---
+.env
+*.env
+credentials.json
+aws.pem
+s3.txt
+
+# --- Các file hệ thống và IDE (Nên bỏ qua) ---
+.idea/
+.vscode/
+*.log
+
+# --- Nếu trong các folder con (service) có thư mục build ---
+**/target/
+**/build/
+**/node_modules/
+
+# --- Các file lạ hoặc file tạm (tùy bạn quyết định) ---
+# Nếu các file curl, GET, Host, nslookup là file thực thi (.exe) thì nên bỏ qua
+*.exe

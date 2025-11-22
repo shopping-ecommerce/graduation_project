@@ -1,0 +1,491 @@
+version: '3.9'
+
+services:
+  kafka:
+    image: 'bitnamilegacy/kafka:latest'
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - '9094:9094'
+    environment:
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://kafka:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+    networks:
+      - shopping-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - shopping-network
+    restart: always
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - shopping-network
+    restart: always
+
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    image: 0336784220/auth-service:latest
+    container_name: auth-service
+    ports:
+      - "8080:8080"
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/auth_db?useSSL=false
+      - DBMS_USERNAME=root
+      - DBMS_PASSWORD=sapassword
+      - JWT_SIGNERKEY=${JWT_SIGNERKEY}
+      - FEIGN_USER=http://user-service:8082
+      - DBKK_CONNECTION=kafka
+      - DBRD_CONNECTION=redis
+    depends_on:
+      - mariadb
+    networks:
+      - shopping-network
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_LOG_LEVEL=info
+      - WATCHTOWER_CLEANUP=true
+    command: --cleanup --interval 60
+    restart: always
+    dns:
+      - 8.8.8.8
+    networks:
+      - shopping-network
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: always
+    networks:
+      - shopping-network
+
+  file-service:
+    build:
+      context: ./file-service
+      dockerfile: Dockerfile
+    image: 0336784220/file-service:latest
+    container_name: file-service
+    ports:
+      - "8084:8084"
+    restart: always
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongodb:27017/file-service?authSource=admin
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+      - AWS_SECRET_KEY=${AWS_SECRET_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_BUCKET_NAME=${AWS_BUCKET_NAME}
+    volumes:
+      - /d/upload:/app/upload
+    depends_on:
+      - mongodb
+    networks:
+      - shopping-network
+
+  mongodb:
+    image: mongo:8.0.1-noble
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=root
+      - MONGO_INITDB_DATABASE=file-service
+    volumes:
+      - mongodb-data:/data/db
+    restart: always
+    networks:
+      - shopping-network
+
+
+  mariadb:
+    image: bitnami/mariadb:latest
+    container_name: mariadb
+    ports:
+      - "3306:3306"
+    environment:
+      - MARIADB_ROOT_PASSWORD=sapassword
+    volumes:
+      - mariadb-data:/bitnami/mariadb
+    restart: always
+    networks:
+      - shopping-network
+
+  notify-service:
+    build:
+      context: ./notify-service
+      dockerfile: Dockerfile
+    image: 0336784220/notify-service:latest
+    container_name: notify-service
+    ports:
+      - "8081:8081"
+    restart: always
+    environment:
+      - DBKK_CONNECTION=kafka
+      - SPRING_DATA_MONGODB_URI=mongodb://root:root@mongodb:27017/notify_db?authSource=admin
+      - BREVO_API_KEY=${BREVO_API_KEY}
+      - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL}
+    depends_on:
+      - kafka
+      - mongodb
+    networks:
+      - shopping-network
+
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    image: 0336784220/user-service:latest
+    container_name: user-service
+    ports:
+      - "8082:8082"
+    restart: always
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mariadb://mariadb:3306/user_db
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=sapassword
+      - JWT_SIGNERKEY=${JWT_SIGNERKEY}
+      - FEIGN_FILE=http://file-service:8084/file
+      - FEIGN_AUTH=http://auth-service:8080/authentication
+      - FEIGN_PRODUCT=http://product-service:8083/product
+      - DBKK_CONNECTION=kafka
+      - INTERNAL_SERVICE_TOKEN=eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJjOWFmNjNiYi1jNzI5LTQxYjYtYmNiYi1kMjdiYWEwN2ZmYWMiLCJyb2xlcyI6WyJST0xFX0FETUlOIl0sImlzcyI6IlNob3BwaW5nIiwic2NvcGVzIjpbIkNSRUFURV9TRUxMRVIiLCJERUxFVEVfU0VMTEVSIiwiVVBEQVRFX09SREVSIiwiQ1JFQVRFX09SREVSIiwiVVBEQVRFX1NFTExFUiIsIkNSRUFURV9VU0VSIiwiVklFV19VU0VSIiwiVklFV19QUk9EVUNUIiwiVklFV19TRUxMRVIiLCJDUkVBVEVfUFJPRFVDVCIsIlVQTE9BRF9GSUxFIiwiREVMRVRFX09SREVSIiwiVVBEQVRFX1BST0RVQ1QiLCJVUERBVEVfVVNFUiIsIkRFTEVURV9QUk9EVUNUIiwiREVMRVRFX1VTRVIiLCJWSUVXX09SREVSIl0sImV4cCI6MTc2MjI4OTQxOCwiaWF0IjoxNzYyMjg1ODE4LCJqdGkiOiIyZGI5MDQwZi04MDFhLTQ2MmUtYTU4YS00ZTI4NzgxOTU0NGQifQ.qr5FM2MGMSLaCbVHG8XBuBcfmrqAs9NNbmE_AReDVdNFIElJ51Wk2jbj5dyZOLBxwu6DoViTcdbh3YDeogjGfg
+    depends_on:
+      - mariadb
+      - file-service
+      - auth-service
+    networks:
+      - shopping-network
+
+  product-service:
+    build:
+      context: ./product-service
+      dockerfile: Dockerfile
+    image: 0336784220/product-service:latest
+    container_name: product-service
+    ports:
+      - "8083:8083"
+    restart: always
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://root:root@mongodb:27017/product_db?authSource=admin
+      - FEIGN_FILE=http://file-service:8084/file
+      - ELASTICSEARCH_URI=http://elasticsearch:9200
+      - FEIGN_GEMINI=http://gemini-service:5001/gemini
+      - FEIGN_REVIEW=http://review-service:8088/feedback
+      - FILE_SERVICE_TOKEN=eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJkZjE0Yjk0NC1mNzNmLTRlNDktOGY3Zi01ZDZmZWVhNzY3YWQiLCJyb2xlcyI6WyJST0xFX0NVU1RPTUVSIl0sImlzcyI6IlNob3BwaW5nIiwic2NvcGVzIjpbIkNSRUFURV9TRUxMRVIiLCJVUExPQURfRklMRSIsIkNSRUFURV9PUkRFUiIsIlVQREFURV9VU0VSIiwiVklFV19QUk9EVUNUIiwiVklFV19PUkRFUiJdLCJleHAiOjE3NjE4NDMxNTgsImlhdCI6MTc2MTgzOTU1OCwianRpIjoiZWJhMjllNmYtZmYyOS00MjlmLTg0ZTEtMzhhZjdiMDBhNjJlIn0.w5SiNZBqxHzMN9zUyTYWXEBGfMdRbnNqhKMgmJX6Z-aZb3UpsoQYTPcp4bEmA8rKeRBPg_dg1eB1lB4iSeaWDw
+    depends_on:
+      - mongodb
+      - file-service
+      - elasticsearch
+    networks:
+      - shopping-network
+
+  chat-ai-service:
+    build:
+      context: ./chat-ai-service
+      dockerfile: Dockerfile
+    image: 0336784220/chat-ai-service:latest
+    container_name: chat-ai-service
+    ports:
+      - "8085:8085"
+    restart: always
+    environment:
+      - GEMINI_KEY=${GEMINI_KEY}
+      - ELASTICSEARCH_URI=http://elasticsearch:9200
+      - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/chat_ai_db
+      - DBMS_USERNAME=root
+      - DBMS_PASSWORD=sapassword
+      - FEIGN_GEMINI=http://gemini-service:5001/gemini
+    depends_on:
+      - mariadb
+      - elasticsearch
+    networks:
+      - shopping-network
+
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    image: 0336784220/order-service:latest
+    container_name: order-service
+    ports:
+      - "8086:8086"
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/order_db
+      - DBMS_USERNAME=root
+      - DBMS_PASSWORD=sapassword
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - FEIGN_AUTH=http://auth-service:8080
+      - FEIGN_PRODUCT=http://product-service:8083/product
+      - FEIGN_USER=http://user-service:8082/info
+      - FEIGN_POLICY=http://policy-service:8091/policy
+      - SERVICE_TOKEN=eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJjOWFmNjNiYi1jNzI5LTQxYjYtYmNiYi1kMjdiYWEwN2ZmYWMiLCJyb2xlcyI6WyJST0xFX0FETUlOIl0sImlzcyI6IlNob3BwaW5nIiwic2NvcGVzIjpbIkNSRUFURV9TRUxMRVIiLCJERUxFVEVfU0VMTEVSIiwiVVBEQVRFX09SREVSIiwiQ1JFQVRFX09SREVSIiwiVVBEQVRFX1NFTExFUiIsIkNSRUFURV9VU0VSIiwiVklFV19VU0VSIiwiVklFV19QUk9EVUNUIiwiVklFV19TRUxMRVIiLCJDUkVBVEVfUFJPRFVDVCIsIlVQTE9BRF9GSUxFIiwiREVMRVRFX09SREVSIiwiVVBEQVRFX1BST0RVQ1QiLCJVUERBVEVfVVNFUiIsIkRFTEVURV9QUk9EVUNUIiwiREVMRVRFX1VTRVIiLCJWSUVXX09SREVSIl0sImV4cCI6MTc2MjI4OTQxOCwiaWF0IjoxNzYyMjg1ODE4LCJqdGkiOiIyZGI5MDQwZi04MDFhLTQ2MmUtYTU4YS00ZTI4NzgxOTU0NGQifQ.qr5FM2MGMSLaCbVHG8XBuBcfmrqAs9NNbmE_AReDVdNFIElJ51Wk2jbj5dyZOLBxwu6DoViTcdbh3YDeogjGfg
+    depends_on:
+      - mariadb
+      - kafka
+      - product-service
+      - user-service
+      - auth-service
+    networks:
+      - shopping-network
+
+  cart-service:
+    build:
+      context: ./cart-service
+      dockerfile: Dockerfile
+    image: 0336784220/cart-service:latest
+    container_name: cart-service
+    ports:
+      - "8087:8087" 
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - FEIGN_PRODUCT=http://product-service:8083/product
+    depends_on:
+      - redis
+      - product-service
+    networks:
+      - shopping-network
+
+  review-service:
+    build:
+      context: ./review-service
+      dockerfile: Dockerfile
+    image: 0336784220/review-service:latest
+    container_name: review-service
+    ports:
+      - "8088:8088"
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - SPRING_DATA_MONGODB_URI=mongodb://root:root@mongodb:27017/review_db?authSource=admin
+      - FEIGN_FILE=http://file-service:8084/file
+    depends_on:
+      - mongodb
+      - file-service
+    networks:
+      - shopping-network
+
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+    image: 0336784220/payment-service:latest
+    container_name: payment-service
+    ports:
+      - "8089:8089"
+    restart: always
+    environment:
+      - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/payment_db
+      - DBMS_USERNAME=root
+      - DBMS_PASSWORD=sapassword
+      - DBKK_CONNECTION=kafka
+      - POLICY_URL=http://policy-service:8091/policy
+      - VNPAY_TMN_CODE=${VNPAY_TMN_CODE}
+      - VNPAY_HASH_SECRET=${VNPAY_HASH_SECRET}
+      - VNPAY_PAY_URL=${VNPAY_PAY_URL}
+      - VNPAY_RETURN_URL=${VNPAY_RETURN_URL}
+      - VNPAY_IPN_URL=${VNPAY_IPN_URL}
+      - VNPAY_API_URL=${VNPAY_API_URL}
+      - VNPAY_ORDER_TYPE=${VNPAY_ORDER_TYPE}
+      - VNPAY_COMMAND=${VNPAY_COMMAND}
+      - VNPAY_VERSION=${VNPAY_VERSION}
+      # Timezone - IMPORTANT!
+      - TZ=Asia/Ho_Chi_Minh
+      - SPRING_PROFILES_ACTIVE=prod
+    depends_on:
+      - mariadb
+    networks:
+      - shopping-network
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    extra_hosts:
+      - "sandbox.vnpayment.vn:103.220.87.3"
+
+  voucher-service:
+    build:
+      context: ./voucher-service
+      dockerfile: Dockerfile
+    image: 0336784220/voucher-service:latest
+    container_name: voucher-service
+    ports:
+      - "8090:8090"
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/voucher_db
+      - DBMS_USERNAME=root
+      - DBMS_PASSWORD=sapassword
+    depends_on:
+      - mariadb
+    networks:
+      - shopping-network
+
+  chat-service:
+    build:
+      context: ./chat-service
+      dockerfile: Dockerfile
+    image: 0336784220/chat-service:latest
+    container_name: chat-service
+    ports:
+      - "5000:5000"
+    restart: always
+    environment:
+      - NODE_ENV=production
+      # MongoDB connection
+      - ATLAS_URI=${ATLAS_URI}
+      # AWS S3 configuration
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+    depends_on:
+      - mongodb
+    networks:
+      - shopping-network
+
+  gemini-service:
+    build:
+      context: ./gemini-service
+      dockerfile: Dockerfile
+    image: 0336784220/gemini-service:latest
+    container_name: gemini-service
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://root:root@mongodb:27017/product_db?authSource=admin
+      - HOST=0.0.0.0
+      - PORT=5001
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json  # Changed path
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCP_LOCATION=${GCP_LOCATION}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - INDEX_ID=${INDEX_ID}
+      - INDEX_ENDPOINT_ID=${INDEX_ENDPOINT_ID}
+      - DEPLOYED_INDEX_ID=${DEPLOYED_INDEX_ID}
+      - IMAGE_INDEX_ENDPOINT_ID=${IMAGE_INDEX_ENDPOINT_ID}
+      - IMAGE_DEPLOYED_INDEX_ID=${IMAGE_DEPLOYED_INDEX_ID}
+      - IMAGE_INDEX_ID=${IMAGE_INDEX_ID}
+    volumes:
+      # Mount credentials from host to container
+      - ./gemini-service/credentials.json:/app/credentials.json:ro
+    depends_on:
+      - mongodb
+    networks:
+      - shopping-network
+
+  policy-service:
+    build:
+      context: ./policy-service
+      dockerfile: Dockerfile
+    image: 0336784220/policy-service:latest
+    container_name: policy-service
+    ports:
+      - "8091:8091"
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DBMS_CONNECTION=jdbc:mariadb://mariadb:3306/policy_db
+      - DBMS_USERNAME=root
+      - DBMS_PASSWORD=sapassword
+      - DBKK_CONNECTION=kafka
+      - FEIGN_FILE=http://file-service:8084/file
+      - FEIGN_USER=http://user-service:8082/info
+      - SERVICE_TOKEN=eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJjOWFmNjNiYi1jNzI5LTQxYjYtYmNiYi1kMjdiYWEwN2ZmYWMiLCJyb2xlcyI6WyJST0xFX0FETUlOIl0sImlzcyI6IlNob3BwaW5nIiwic2NvcGVzIjpbIkNSRUFURV9TRUxMRVIiLCJERUxFVEVfU0VMTEVSIiwiVVBEQVRFX09SREVSIiwiQ1JFQVRFX09SREVSIiwiVVBEQVRFX1NFTExFUiIsIkNSRUFURV9VU0VSIiwiVklFV19VU0VSIiwiVklFV19QUk9EVUNUIiwiVklFV19TRUxMRVIiLCJDUkVBVEVfUFJPRFVDVCIsIlVQTE9BRF9GSUxFIiwiREVMRVRFX09SREVSIiwiVVBEQVRFX1BST0RVQ1QiLCJVUERBVEVfVVNFUiIsIkRFTEVURV9QUk9EVUNUIiwiREVMRVRFX1VTRVIiLCJWSUVXX09SREVSIl0sImV4cCI6MTc2MjI4OTQxOCwiaWF0IjoxNzYyMjg1ODE4LCJqdGkiOiIyZGI5MDQwZi04MDFhLTQ2MmUtYTU4YS00ZTI4NzgxOTU0NGQifQ.qr5FM2MGMSLaCbVHG8XBuBcfmrqAs9NNbmE_AReDVdNFIElJ51Wk2jbj5dyZOLBxwu6DoViTcdbh3YDeogjGfg
+    depends_on:
+      - mariadb
+      - kafka
+      - file-service
+      - user-service
+    networks:
+      - shopping-network
+    
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    image: 0336784220/api-gateway:latest
+    container_name: api-gateway
+    ports:
+      - "8888:8888"
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AUTH_URL=http://auth-service:8080
+      - NOTIFY_URL=http://notify-service:8081
+      - USER_URL=http://user-service:8082
+      - PRODUCT_URL=http://product-service:8083
+      - FILE_URL=http://file-service:8084
+      - CHAT_AI_URL=http://chat-ai-service:8085
+      - ORDER_URL=http://order-service:8086
+      - CART_URL=http://cart-service:8087
+      - REVIEW_URL=http://review-service:8088
+      - PAYMENT_URL=http://payment-service:8089
+      - VOUCHER_URL=http://voucher-service:8090
+      - POLICY_URL=http://policy-service:8091
+      - CHAT_URL=http://chat-service:5000
+      - GEMINI_URL=http://gemini-service:5001
+    depends_on:
+      - redis
+      - auth-service
+      - notify-service
+      - user-service
+      - file-service
+      - review-service
+    networks:
+      - shopping-network
+
+volumes:
+  redis-data:
+  mongodb-data:
+  mariadb-data:
+  elasticsearch-data:
+
+networks:
+  shopping-network:
+    driver: bridge
