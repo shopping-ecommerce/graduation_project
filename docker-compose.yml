@@ -443,7 +443,7 @@ services:
     image: 0336784220/api-gateway:latest
     container_name: api-gateway
     ports:
-      - "8888:8888"
+      - "80:8888"
     restart: always
     environment:
       - REDIS_HOST=redis
